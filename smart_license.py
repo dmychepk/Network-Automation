@@ -106,24 +106,25 @@ class SmartLicenseOnPrem:
         self.client_id = ''
         self.client_secret = ''
         self.url = ''
+        self.smart_account = ''
         self.virtual_account = ''
 
     def get_auth_token(self):
         auth_url = self.url + '/oauth/token'
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         auth_data = f'''
-            {{"grant_type": f"{self.grant_type}", 
-            "username": f"{self.username}",
-            "password": f"{self.password}",
-            "client_id": f"{self.client_id}",
-            "client_secret": f"{self.client_secret}"}}
+            {{"grant_type": "{self.grant_type}", 
+            "username": "{self.username}",
+            "password": "{self.password}",
+            "client_id": "{self.client_id}",
+            "client_secret": "{self.client_secret}"}}
             '''
         token = requests.post(auth_url, headers=headers, data=auth_data, verify=False)
         auth_token = token.json()['access_token']
         return auth_token
 
     def get_token(self, auth_token):
-        token_url = self.url + '/api/v1/accounts/{self.virtual_account}/virtual-accounts/Default/tokens'
+        token_url = self.url + f'/api/v1/accounts/{self.smart_account}/virtual-accounts/{self.virtual_account}/tokens'
         headers = {'Content-Type': 'application/json', 'Accept': 'application/json',
                    'Authorization': f'Bearer {auth_token}'}
         response = requests.get(token_url, headers=headers, verify=False)

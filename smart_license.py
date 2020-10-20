@@ -37,41 +37,41 @@ class CiscoIOSDevice:
                 self.hostname = self.__session.find_prompt().replace('#', '')
             logging.info(f'{self.hostname} :: {self.ip} :: Connected :: {datetime.now()}')
             return self.__session
-        except: # Add more specific exceptions
-            logging.error(f'{self.ip} :: Not able to connect :: {datetime.now()}')
+        except Exception as e:
+            logging.error(f'{self.ip} :: {e} :: {datetime.now()}')
 
     def disconnect(self):
         self.__session.disconnect()
         logging.info(f'{self.hostname} :: {self.ip} :: Disconnected :: {datetime.now()}')
         self.__session = None
 
-    def configuration_check(self):
-        verification_commands = ['show run']
-        return [(self.__session.send_command(command)).splitlines() for command in verification_commands]
+    def show_run(self):
+        return self.__session.send_command('show run').splitlines()
 
     def check_status(self):
         show_license = self.__session.send_command('show license status')
         status = []
         for line in show_license.splitlines():
             if 'Status:' in line:
-                status.append(line.strip()[7:])
+                status.append(line.strip()[8:])
         status.pop(0)
         registration_status = status[0]
         if registration_status == 'REGISTERED':
+            logging.info(f'{self.hostname} :: {self.ip} :: Device is registered :: {datetime.now()}')
             self.registered = True
-        #dlc_status = status[2]
-        #if dlc_status != 'Not started':
-            #self.dlc = True
-        return self.registered
+        dlc_status = status[2]
+        if dlc_status != 'Not started':
+            logging.info(f'{self.hostname} :: {self.ip} :: DLC did not started :: {datetime.now()}')
+            self.dlc = True
 
     def register(self, token):
-        pre_check = self.configuration_check()
+        pre_check = self.show_run()
         self.__session.send_config_from_file(config_file='smart_license_config.txt')
         logging.info(f'{self.hostname} :: {self.ip} :: Configuration for Smart License is done :: {datetime.now()}')
-        post_check = self.configuration_check()
+        post_check = self.show_run()
         with open(f'{self.hostname}.html', 'w') as diff_file:
             diff = difflib.HtmlDiff()
-            diff_file.write(diff.make_file(pre_check, post_check, fromdesc=f'{self.hostname} :: {datetime.now()}', todesc=f'{self.hostname} :: {datetime.now()}'))
+            diff_file.write(diff.make_file(pre_check, post_check))
         self.__session.save_config()
         logging.info(f'{self.hostname} :: {self.ip} :: Configuration is saved :: {datetime.now()}')
         self.__session.send_command(f'license smart register idtoken {token}')
@@ -88,14 +88,15 @@ class CiscoIOSDevice:
                     break
         if not self.registered:
             self.__session.send_command('show license status')
-            # get error
-            # registration_error =
-            logging.warning(
+            for line in self.__session.send_command('show license status').splitlines():
+                if line.strip().startswith('Failure reason:'):
+                    registration_error = line.strip()[16:]
+                    logging.warning(
                 f'{self.hostname} :: {self.ip} :: {registration_error} :: {datetime.now()}')
 
     def run_dlc(self):
-        self.__session.send_command('run dlc')
-        logging.info(f'{self.hostname} :: {self.ip} :: DLC started :: {datetime.now()}')
+        self.__session.send_command('license smart conversion start')
+        logging.info(f'{self.hostname} :: {self.ip} :: DLC Started :: {datetime.now()}')
 
 
 class SmartLicenseOnPrem:
@@ -135,38 +136,38 @@ if __name__ == '__main__':
 
     logging.basicConfig(filename='smart_license.log',
                         format = '%(threadName)s: %(levelname)s: %(message)s',
-                        level=logging.DEBUG)
+                        level=logging.INFO)
 
     def smart_license_registration(device):
-        device.connect()
-        if not device.registered:
-            device.register(token='123')
-            device.wait_for_registration(seconds=300)
+        if device.connect():
+            if not device.registered:
+                device.register(token)
+                device.wait_for_registration(seconds=300)
             if device.registered:
-                device.run_dlc()
+                if not device.dlc:
+                    device.run_dcl()
             device.disconnect()
-
+            return 'success'
+        else:
+            return 'failed'
 
     username = input('Enter user login: ')
     password = getpass('Enter user password: ')
 
-    devices = [CiscoIOSDevice('10.0.0.61', ConnectionParameters(username, password)),
-               CiscoIOSDevice('10.0.0.62', ConnectionParameters(username, password))]
+    with open('inventory.csv') as inventory_file:
+        reader = csv.DictReader(inventory_file)
+        for device in reader:
+            devices.append(CiscoIOSDevice(device['IP Address'], connection_parameters))
 
-    #with open('inventory.csv') as inventory_file:
-        #reader = csv.DictReader(inventory_file)
-        #for device in reader:
-            #devices.append(CiscoIOSDevice(device['IP Address'], connection_parameters))
+    slop_username = input('Enter SmartLicenseOnPrem user: ')
+    slop_password = getpass('Enter SmartLicenseOnPrem password: ')
 
-    #slop_username = input('Enter SmartLicenseOnPrem user: ')
-    #slop_password = getpass('Enter SmartLicenseOnPrem password: ')
-
-    #slop = SmartLicenseOnPrem(slop_username, slop_password)
-    #auth_token = slop.get_auth_token()
-    #token = slop.get_token(auth_token)
+    slop = SmartLicenseOnPrem(slop_username, slop_password)
+    auth_token = slop.get_auth_token()
+    token = slop.get_token(auth_token)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         result = executor.map(smart_license_registration, devices)
-        for device in result:
-            print(device)
+        for device, outcome in zip(devices, result):
+            print(f'{device:>20}  {outcome:>20}')
 

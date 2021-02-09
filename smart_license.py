@@ -2,11 +2,11 @@ from netmiko import ConnectHandler
 import csv
 from getpass import getpass
 from concurrent.futures import ThreadPoolExecutor
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 import requests
 import time
 import logging
 from datetime import datetime
-import sys
 import difflib
 
 
@@ -87,7 +87,6 @@ class CiscoIOSDevice:
                         f'{self.hostname} :: {self.ip} :: Devices has been registered :: {datetime.now()}')
                     break
         if not self.registered:
-            self.__session.send_command('show license status')
             for line in self.__session.send_command('show license status').splitlines():
                 if line.strip().startswith('Failure reason:'):
                     registration_error = line.strip()[16:]
@@ -97,6 +96,10 @@ class CiscoIOSDevice:
     def run_dlc(self):
         self.__session.send_command('license smart conversion start')
         logging.info(f'{self.hostname} :: {self.ip} :: DLC Started :: {datetime.now()}')
+
+    def ping(self):
+        ping_result = self.__session.send_command('ping IP')
+        return True if '64 bytes' in ping_result else False
 
 
 class SmartLicenseOnPrem:
@@ -136,16 +139,20 @@ if __name__ == '__main__':
 
     logging.basicConfig(filename='smart_license.log',
                         format = '%(threadName)s: %(levelname)s: %(message)s',
-                        level=logging.INFO)
+                        level=logging.info)
 
     def smart_license_registration(device):
         if device.connect():
             if not device.registered:
                 device.register(token)
+                if not device.ping():
+                    return 'smart license server is not reachable'
                 device.wait_for_registration(seconds=300)
             if device.registered:
                 if not device.dlc:
                     device.run_dcl()
+            else:
+                return 'failed to register'
             device.disconnect()
             return 'success'
         else:
@@ -153,6 +160,11 @@ if __name__ == '__main__':
 
     username = input('Enter user login: ')
     password = getpass('Enter user password: ')
+
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+    devices = []
+    connection_parameters = ConnectionParameters(username, password)
 
     with open('inventory.csv') as inventory_file:
         reader = csv.DictReader(inventory_file)
@@ -170,4 +182,3 @@ if __name__ == '__main__':
         result = executor.map(smart_license_registration, devices)
         for device, outcome in zip(devices, result):
             print(f'{device:>20}  {outcome:>20}')
-

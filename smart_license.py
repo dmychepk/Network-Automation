@@ -28,6 +28,7 @@ class CiscoIOSDevice:
         self.registered = False
         self.dlc = False
         self.__session = None
+        self.dlc_supported = False
 
     def connect(self):
         try:
@@ -59,10 +60,12 @@ class CiscoIOSDevice:
         if registration_status == 'REGISTERED':
             logging.info(f'{self.hostname} :: {self.ip} :: Device is registered :: {datetime.now()}')
             self.registered = True
-        dlc_status = status[2]
-        if dlc_status != 'Not started':
-            logging.info(f'{self.hostname} :: {self.ip} :: DLC did not started :: {datetime.now()}')
-            self.dlc = True
+        if len(status) == 3:
+            self.dlc_supported = True
+            dlc_status = status[2]
+            if dlc_status != 'Not started':
+                logging.info(f'{self.hostname} :: {self.ip} :: DLC started :: {datetime.now()}')
+                self.dlc = True
 
     def register(self, token):
         pre_check = self.show_run()
@@ -149,14 +152,15 @@ if __name__ == '__main__':
                     return 'smart license server is not reachable'
                 device.wait_for_registration(seconds=300)
             if device.registered:
-                if not device.dlc:
-                    device.run_dcl()
+                if device.dlc_supported:
+                    if not device.dlc:
+                        device.run_dcl()
             else:
                 return 'failed to register'
             device.disconnect()
             return 'success'
         else:
-            return 'failed'
+            return 'failed to connect'
 
     username = input('Enter user login: ')
     password = getpass('Enter user password: ')
